@@ -81,7 +81,7 @@ def _get_debug() -> bool:
 
 
 @contextmanager
-def get_openai_callback() -> Generator[OpenAICallbackHandler, None, None]:
+def get_openai_callback(streaming=False) -> Generator[OpenAICallbackHandler, None, None]:
     """Get the OpenAI callback handler in a context manager.
     which conveniently exposes token and cost information.
 
@@ -92,7 +92,7 @@ def get_openai_callback() -> Generator[OpenAICallbackHandler, None, None]:
         >>> with get_openai_callback() as cb:
         ...     # Use the OpenAI callback handler
     """
-    cb = OpenAICallbackHandler()
+    cb = OpenAICallbackHandler(streaming)
     openai_callback_var.set(cb)
     yield cb
     openai_callback_var.set(None)

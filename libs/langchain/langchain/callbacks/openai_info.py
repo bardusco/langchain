@@ -103,11 +103,16 @@ def get_openai_token_cost_for_model(
 class OpenAICallbackHandler(BaseCallbackHandler):
     """Callback Handler that tracks OpenAI info."""
 
-    total_tokens: int = 0
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    successful_requests: int = 0
-    total_cost: float = 0.0
+    def __init__(self, streaming=False):
+        super().__init__()
+        self.total_tokens: int = 0
+        self.prompt_tokens: int = 0
+        self.completion_tokens: int = 0
+        self.successful_requests: int = 0
+        self.total_cost: float = 0.0
+        self.streaming: bool = streaming
+        self.message: str = ""
+        self.model_name: str = ""
 
     def __repr__(self) -> str:
         return (
@@ -115,7 +120,8 @@ class OpenAICallbackHandler(BaseCallbackHandler):
             f"\tPrompt Tokens: {self.prompt_tokens}\n"
             f"\tCompletion Tokens: {self.completion_tokens}\n"
             f"Successful Requests: {self.successful_requests}\n"
-            f"Total Cost (USD): ${self.total_cost}"
+            f"Total Cost (USD): ${self.total_cost}\n"
+            f"MESSAGE: {self.message}"
         )
 
     @property
@@ -123,36 +129,54 @@ class OpenAICallbackHandler(BaseCallbackHandler):
         """Whether to call verbose callbacks even if verbose is False."""
         return True
 
+    def _count_prompt_tokens(self, prompts: List[str]):
+        for prompt in prompts:
+            self.message += prompt
+
     def on_llm_start(
         self, serialized: Dict[str, Any], prompts: List[str], **kwargs: Any
     ) -> None:
         """Print out the prompts."""
+        # TODO: calcular o prompt
+        # self.prompt_tokens = 3000
+        # self.prompt_tokens = len(prompts[0])
+        self.model_name = serialized["kwargs"]["model"]
+        self._count_prompt_tokens(prompts)
         pass
 
     def on_llm_new_token(self, token: str, **kwargs: Any) -> None:
-        """Print out the token."""
-        pass
+        self.total_tokens += 1
+        self.completion_tokens += 1
+        model_name = standardize_model_name(self.model_name)
+        if model_name in MODEL_COST_PER_1K_TOKENS:
+            completion_cost = get_openai_token_cost_for_model(
+                model_name, 1, is_completion=True
+            )
+            self.total_cost += completion_cost
 
     def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
         """Collect token usage."""
-        if response.llm_output is None:
-            return None
+        if self.streaming:
+            pass
+        else:
+            if response.llm_output is None:
+                return None
+            if "token_usage" not in response.llm_output:
+                return None
+            token_usage = response.llm_output["token_usage"]
+            completion_tokens = token_usage.get("completion_tokens", 0)
+            prompt_tokens = token_usage.get("prompt_tokens", 0)
+            model_name = standardize_model_name(response.llm_output.get("model_name", ""))
+            if model_name in MODEL_COST_PER_1K_TOKENS:
+                completion_cost = get_openai_token_cost_for_model(
+                    model_name, completion_tokens, is_completion=True
+                )
+                prompt_cost = get_openai_token_cost_for_model(model_name, prompt_tokens)
+                self.total_cost += prompt_cost + completion_cost
+            self.total_tokens += token_usage.get("total_tokens", 0)
+            self.prompt_tokens += prompt_tokens
+            self.completion_tokens += completion_tokens
         self.successful_requests += 1
-        if "token_usage" not in response.llm_output:
-            return None
-        token_usage = response.llm_output["token_usage"]
-        completion_tokens = token_usage.get("completion_tokens", 0)
-        prompt_tokens = token_usage.get("prompt_tokens", 0)
-        model_name = standardize_model_name(response.llm_output.get("model_name", ""))
-        if model_name in MODEL_COST_PER_1K_TOKENS:
-            completion_cost = get_openai_token_cost_for_model(
-                model_name, completion_tokens, is_completion=True
-            )
-            prompt_cost = get_openai_token_cost_for_model(model_name, prompt_tokens)
-            self.total_cost += prompt_cost + completion_cost
-        self.total_tokens += token_usage.get("total_tokens", 0)
-        self.prompt_tokens += prompt_tokens
-        self.completion_tokens += completion_tokens
 
     def __copy__(self) -> "OpenAICallbackHandler":
         """Return a copy of the callback handler."""
